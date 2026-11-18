@@ -4,6 +4,8 @@
   culprit sample            one full sample (CPU, memory, disk, spawns), kept in the history
   culprit report            what got worse since the earlier samples, and who is behind it
   culprit watch             sample and report on a timer until stopped
+  culprit log               every change made in culprit's name, and how to undo it
+  culprit log add ...       record a change (refused unless it is an optimisation)
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ import sys
 import time
 from dataclasses import asdict
 
-from . import __version__, diagnose, procs, sample, trace as tracing
+from . import __version__, actions, diagnose, procs, sample, trace as tracing
 
 
 def _seconds(text: str) -> float:
@@ -118,6 +120,35 @@ def cmd_watch(args) -> int:
         return 0
 
 
+def cmd_log(args) -> int:
+    if args.action == "rules":
+        print("An unattended run may only:")
+        for kind, meaning in actions.ALLOWED.items():
+            print(f"  {kind:22s} {meaning}")
+        print("\nIt may never do these; they need a person:")
+        for kind, meaning in actions.FORBIDDEN.items():
+            print(f"  {kind:22s} {meaning}")
+        return 0
+    if args.action == "add":
+        entry = {"stage": args.stage, "kind": args.kind, "target": args.target, "why": args.why, "change": args.change,
+                 "undo": args.undo, "before": args.before, "after": args.after, "unit": args.unit}
+        try:
+            row = actions.add(entry, automatic=not args.approved)
+        except actions.Refused as refusal:
+            print(f"culprit: refused: {refusal}", file=sys.stderr)
+            return 4
+        print(json.dumps(row) if args.json else actions.line(row))
+        return 0
+    rows = actions.load()
+    if args.json:
+        print(json.dumps(rows))
+    elif not rows:
+        print("Nothing has been changed in culprit's name.")
+    else:
+        print("\n".join(actions.line(row) for row in rows))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="culprit", description=__doc__.strip().splitlines()[0],
                                      epilog=__doc__.split("\n", 2)[2], formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -140,6 +171,20 @@ def main(argv: list[str] | None = None) -> int:
         sub.add_argument("--since", type=_seconds, default=6 * 3600.0, help="how far back to compare (default 6h)")
         if name == "watch":
             sub.add_argument("--every", type=_seconds, default=1200.0, help="time between samples (default 20m)")
+    log = commands.add_parser("log", help="what was changed in culprit's name, and how to undo it")
+    log.add_argument("action", nargs="?", choices=("show", "add", "rules"), default="show")
+    log.add_argument("--stage", choices=actions.STAGES, help="planned, applied, verified, reverted or skipped")
+    log.add_argument("--kind", help="the kind of optimisation (see `culprit log rules`)")
+    log.add_argument("--target", help="what was changed: a file, a setting, a process")
+    log.add_argument("--why", help="the finding behind it")
+    log.add_argument("--change", help="what was done, in a sentence")
+    log.add_argument("--undo", help="how to reverse it (required when applied)")
+    log.add_argument("--before", type=float, help="the reading before")
+    log.add_argument("--after", type=float, help="the reading after")
+    log.add_argument("--unit", default="a second", help="what the readings count (default: a second)")
+    log.add_argument("--approved", action="store_true", help="a person approved this action, so the automatic-only rules do not apply")
+    log.add_argument("--json", action="store_true", help="print JSON")
+    log.set_defaults(run=cmd_log)
     args = parser.parse_args(argv)
     try:
         return args.run(args)

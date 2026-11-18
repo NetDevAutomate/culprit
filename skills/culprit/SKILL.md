@@ -38,6 +38,37 @@ and, with consent, the fixing.
 6. Wait (20 to 30 minutes is plenty) and go to 1. When the cause of a problem is known and will
    last for hours, sample less often.
 
+## Automatic mode: fixing without asking
+
+Only when the user has said so in plain words ("fix what you find", "run it unattended"). Without
+that, rule 1 stands and you ask every time.
+
+In automatic mode you may make **optimisations only**: changes that do the same work more cheaply
+and can be undone. `culprit log rules` prints the whole list; it is short on purpose.
+
+- Allowed: poll less often, skip work when nothing changed, read a file instead of running a
+  command, share one poll, back off on unchanged things, a cheaper call, keeping generated files
+  out of indexing, lowering a background process's priority.
+- Never, in any mode, without the person: stopping or killing anything, deleting anything,
+  turning a feature off, moving or disabling a scheduled job, unloading models or quitting apps,
+  touching work that is not yours to touch. Note these with `--stage skipped` and tell the person.
+
+Every action goes through the log, in this order, and **a refusal (exit status 4) means stop**:
+
+1. `culprit log add --stage planned --kind <kind> --target "<what>" --why "<the finding>"`
+   before you touch anything.
+2. Make the change in code the user owns. Keep it small. Run that project's tests. Leave other
+   people's uncommitted work alone, and do not commit or push unless the user's own rules say to.
+3. `culprit log add --stage applied ... --change "<what you did>" --undo "<how to reverse it>"`.
+   No undo, no apply.
+4. Measure again with `culprit trace` or `culprit sample`, then
+   `culprit log add --stage verified ... --before <n> --after <n>`. If the reading did not improve
+   the log refuses: undo the change and record `--stage reverted`.
+5. Tell the user what was done, with the before and after. `culprit log` is the full record.
+
+One change at a time, each verified before the next. If a fix needs anything outside the allowed
+list, stop and ask.
+
 ## Reading the numbers
 
 - **Kernel CPU above 25% with many process starts** is churn: starting and ending processes is

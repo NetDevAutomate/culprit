@@ -80,6 +80,36 @@ this Mac". It reports only what changed, and it never changes anything without a
 that session process starts went from 29 to 43 a second down to about 10 with the machine otherwise
 quiet, and none of the fixes removed a feature.
 
+## Automatic fixes, and the log
+
+culprit itself never changes anything on your machine. The agent following the skill can, and you
+can let it do so unattended. Two things hold it in:
+
+- **Only optimisations.** `culprit log rules` lists the eight kinds of change an unattended run
+  may make. Each one does the same work more cheaply: poll less often, skip work when nothing
+  changed, read a file instead of running a command, back off on unchanged things. Stopping a
+  process, deleting anything, turning a feature off, moving a scheduled job and unloading models
+  are refused outright and left for you.
+- **Everything is logged, in order.** An action is recorded as planned before it is made, as
+  applied with how to undo it, then as verified with the reading before and after. A change that
+  did not improve the reading cannot be marked verified; it has to be reverted, and that is
+  logged too. The log (`~/.local/state/culprit/actions.jsonl`) is append-only.
+
+```text
+$ culprit log
+18 Nov 21:02  planned  skip-when-unchanged: status plugin poll
+      why: 6 ps a second for 3 samples
+18 Nov 21:09  applied  skip-when-unchanged: status plugin poll
+      why: 6 ps a second for 3 samples
+      what: stat the runs folder before starting the poll
+      undo: git revert 3f2a1c9
+18 Nov 21:12  verified skip-when-unchanged: status plugin poll (6 to 0 a second)
+      why: 6 ps a second for 3 samples
+```
+
+This is a gate and a record, not a sandbox. It refuses to record an action that breaks the rules,
+and the skill treats a refusal as a stop, but it cannot restrain an agent that ignores the skill.
+
 ## How it works
 
 - **Spawn tracing.** The process table is listed every few milliseconds through
