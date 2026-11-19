@@ -2,8 +2,8 @@
 
 Linux tells an ordinary user more than macOS does: any process's parent, command line, CPU time
 and memory. What it keeps for the owner is the link to the program a process runs and the bytes
-it has written. So another user's process is named from its command line, or failing that by the
-short name the kernel keeps, and is charged no disk writes.
+it has written. So another user's process is named by the short name the kernel keeps for it, and
+is charged no disk writes.
 
 Every process reader returns None for a process it cannot read (gone, or a kernel thread).
 """
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 
+from . import label
 from .readings import CpuTicks, Memory, Usage
 
 NAME = "Linux"
@@ -71,8 +72,7 @@ def parent(pid: int) -> int | None:
 
 def path(pid: int) -> str | None:
     """The program a process is running. Only its owner may follow the link to it, so another
-    user's process is named by the first word of its command line when that is a full path, and
-    otherwise by the short name the kernel keeps for it."""
+    user's process is named by the short name the kernel keeps for it."""
     try:
         return os.readlink(f"/proc/{pid}/exe").removesuffix(" (deleted)")
     except PermissionError:
@@ -80,21 +80,31 @@ def path(pid: int) -> str | None:
     except OSError:
         return None  # gone, or on its way out
     words = argv(pid)
-    if not words:
+    stat = parse_stat(_read(f"/proc/{pid}/stat") or b"") if words else None
+    return parse_name(words, stat[0] if stat else None)
+
+
+def parse_name(words: list[str] | None, short: str | None) -> str | None:
+    """What to call a process whose program link is closed to us: the short name the kernel keeps
+    for it, which is at most 15 characters. The process can set that name, so it is redacted.
+    The first word of its command line is not used: that is whatever the process says it is, and
+    a program's name is printed and kept as it stands."""
+    if not words or not short:
         return None  # no command line: a kernel thread, or a process that has exited
-    if words[0].startswith("/"):
-        return words[0]
-    stat = parse_stat(_read(f"/proc/{pid}/stat") or b"")
-    return stat[0] if stat else None
+    return label.redact([short])[0]
 
 
 def parse_cmdline(raw: bytes) -> list[str] | None:
     """/proc/<pid>/cmdline: the arguments, each ended by a NUL. A program that rewrites its title
-    leaves one word padded with NULs."""
+    leaves one run of text with spaces where the NULs were. That is split on the spaces, or a
+    secret in it would sit inside one long word, where redaction does not look."""
     raw = raw.rstrip(b"\0")
     if not raw:
         return None
-    return [word.decode("utf-8", "replace") for word in raw.split(b"\0")]
+    words = raw.split(b"\0")
+    if len(words) == 1:
+        words = raw.split() or words
+    return [word.decode("utf-8", "replace") for word in words]
 
 
 def argv(pid: int) -> list[str] | None:
@@ -112,9 +122,11 @@ def parse_footprint(raw: bytes) -> int | None:
 
 
 def parse_written(raw: bytes) -> int:
-    """/proc/<pid>/io: bytes sent to storage, less those deleted again before they got there."""
+    """/proc/<pid>/io: bytes sent to storage, less those deleted again before they got there. A
+    process that deletes what others wrote reads below zero, so only the change between two
+    readings means anything."""
     count = _numbers(raw)
-    return max(0, count.get("write_bytes", 0) - count.get("cancelled_write_bytes", 0))
+    return count.get("write_bytes", 0) - count.get("cancelled_write_bytes", 0)
 
 
 _ticks_per_second: int | None = None

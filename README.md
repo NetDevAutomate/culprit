@@ -121,8 +121,8 @@ and the skill treats a refusal as a stop, but it cannot restrain an agent that i
 - **Other users' processes.** On macOS `ps` itself is setuid root, so `libproc` will not give its
   parent to an ordinary user. The kernel's process record (`sysctl kern.proc.pid`) does. Linux
   gives any user every process's parent and command line but keeps the link to its program for
-  the owner, so another user's process is named from its command line, or by the short name the
-  kernel keeps.
+  the owner, so another user's process is named by the short name the kernel keeps for it
+  (15 characters at most).
 - **Per-program numbers.** On macOS `proc_pid_rusage` gives CPU time, memory footprint (compressed
   and swapped pages included) and bytes written, read at the start and end of the window. On
   Linux they come from `/proc/<pid>/stat`, `status` and `io`; memory is what is the process's

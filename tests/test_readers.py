@@ -1,7 +1,7 @@
 """What each platform's readers make of the kernel's own formats, on made-up input. These run anywhere."""
 import struct
 
-from culprit import _linux, _macos
+from culprit import _linux, _macos, label
 from culprit.readings import CpuTicks, Memory, Usage
 
 
@@ -31,7 +31,8 @@ def test_a_stat_cut_short_is_unreadable_not_a_guess():
 def test_a_command_line_is_split_on_nul_and_an_empty_one_is_none():
     assert _linux.parse_cmdline(b"git\0-C\0/h/me/repo\0status\0") == ["git", "-C", "/h/me/repo", "status"]
     assert _linux.parse_cmdline(b"sh\0-c\0\0x\0") == ["sh", "-c", "", "x"]             # an empty argument is kept
-    assert _linux.parse_cmdline(b"postgres: writer\0\0\0\0") == ["postgres: writer"]  # a rewritten title, padded
+    # a rewritten title is one run of text, padded: split on its spaces so each word can be redacted
+    assert _linux.parse_cmdline(b"/usr/bin/worker --token private-value\0\0\0") == ["/usr/bin/worker", "--token", "private-value"]
     assert _linux.parse_cmdline(b"") is None                                           # a kernel thread, or a zombie
 
 
@@ -50,7 +51,10 @@ def test_footprint_is_private_memory_in_ram_and_in_swap():
 def test_bytes_written_leave_out_what_was_deleted_before_it_reached_the_disk():
     io = b"rchar: 9\nwchar: 9000\nread_bytes: 4096\nwrite_bytes: 8192\ncancelled_write_bytes: 4096\n"
     assert _linux.parse_written(io) == 4096
-    assert _linux.parse_written(b"write_bytes: 10\ncancelled_write_bytes: 50\n") == 0
+    # a process that deleted what others wrote reads below zero; 20 more bytes still show as 20 more
+    before = _linux.parse_written(b"write_bytes: 10\ncancelled_write_bytes: 50\n")
+    after = _linux.parse_written(b"write_bytes: 30\ncancelled_write_bytes: 50\n")
+    assert (before, after, after - before) == (-40, -20, 20)
 
 
 def test_the_cpu_line_counts_interrupts_as_kernel_time_and_waiting_for_io_as_idle():
@@ -88,3 +92,23 @@ def test_pressure_is_given_on_the_scale_macos_uses():
     assert _linux.parse_pressure(line.format(60.0, 30.0).encode()) == 4   # every task waited at once
     assert _linux.parse_pressure(None) == 0                               # this kernel keeps no figures
     assert _linux.parse_pressure(b"not what was expected") == 0
+
+
+def test_a_process_that_cannot_be_followed_is_named_by_the_kernels_short_name():
+    assert _linux.parse_name(["/usr/sbin/sshd", "-D"], "sshd") == "sshd"
+    assert _linux.parse_name(["postgres:", "18/main:", "writer"], "postgres") == "postgres"
+    assert _linux.parse_name(None, "kworker/0:1") is None  # no command line: a kernel thread, or gone
+
+
+def test_a_name_the_process_chose_for_itself_cannot_carry_a_secret_out():
+    # Arrange: a title rewritten to hold a token, and a short name set to one
+    words = _linux.parse_cmdline(b"/usr/bin/worker --token private-value\0")
+    # Act
+    name = _linux.parse_name(words, "worker")
+    # Assert: the program is the kernel's name for it, and the line that is printed hides the value
+    assert name == "worker" and label.program(name) == "worker"
+    assert label.describe(name, words, home="/h/me") == f"worker --token {label.HIDDEN}"
+    assert _linux.parse_name(["token=abc123"], "token=abc123") == f"token={label.HIDDEN}"
+    # a first word made to look like a path is not believed, with a space in it or without
+    assert _linux.parse_name(["/opt/x --token private-value", "run"], "x") == "x"
+    assert _linux.parse_name(["/x/PLANTEDSECRETabc123xyz", "run"], "worker") == "worker"

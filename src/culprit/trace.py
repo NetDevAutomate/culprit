@@ -93,11 +93,19 @@ def attribute(base: dict[int, Proc], known: dict[int, Proc], seconds: float, hom
     # Linux lists the kernel's own threads as processes: children of `kernel_parent` with no command line.
     kernel = lambda proc: kernel_parent is not None and proc.ppid == kernel_parent and not proc.argv
     new = [proc for pid, proc in known.items() if pid not in base and not kernel(proc)]
-    # The service manager is pid 1, unless pid 1 is an ordinary program, as it is in a container.
-    # On Linux each logged-in user has a systemd of their own as well.
-    managers = {pid for pid, proc in base.items()
-                if (pid == 1 and (not proc.path or label.program(proc.path) in SERVICE_MANAGERS))
-                or (pid != 1 and label.program(proc.path) == "systemd" and "--user" in (proc.argv or []))}
+
+    def manager(pid: int, proc: Proc) -> str | None:
+        """What a service manager is called, or None when `proc` is not one. It is pid 1, unless
+        pid 1 is an ordinary program, as it is in a container. BusyBox's init runs as `busybox`
+        and is known by its first argument. On Linux pid 1 also starts each user a systemd of
+        their own, known by its program: any process may call itself `systemd --user`."""
+        if pid == 1:
+            names = ([label.program(proc.path)] if proc.path else []) + [os.path.basename(word) for word in (proc.argv or [])[:1]]
+            return next((name for name in names if name in SERVICE_MANAGERS), None if proc.path else "pid 1")
+        users_own = proc.ppid == 1 and label.program(proc.path) == "systemd" and "--user" in (proc.argv or [])
+        return "systemd" if users_own else None
+
+    managers = {pid: name for pid, name in ((pid, manager(pid, proc)) for pid, proc in base.items()) if name}
 
     def ancestor(proc: Proc) -> int | None:
         seen: set[int] = set()
@@ -136,8 +144,7 @@ def attribute(base: dict[int, Proc], known: dict[int, Proc], seconds: float, hom
         for proc in children:
             if root in managers:
                 top = job(proc)
-                manager = label.program(base[root].path) if base[root].path else "pid 1"
-                who = (label.describe(top.path, top.argv, home) if top.path else UNREAD) + f" (a job {manager} starts)"
+                who = (label.describe(top.path, top.argv, home) if top.path else UNREAD) + f" (a job {managers[root]} starts)"
                 groups[who, None].append(proc)
             else:
                 started_by_kernel = root is not None and (root == kernel_parent or kernel(base[root]))

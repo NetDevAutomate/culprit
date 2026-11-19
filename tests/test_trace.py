@@ -152,3 +152,27 @@ def test_a_program_that_only_shares_a_service_managers_name_is_named_like_any_ot
     traced = tracing.attribute(base, known, seconds=1.0, home="/h/me", own_pid=999)
     # Assert
     assert [(s.who, s.pid, s.count) for s in traced.spawners] == [("init --user build-agent", 777, 1)]
+
+
+def test_busybox_init_is_a_service_manager_and_another_busybox_program_is_not():
+    # Arrange: read as root, BusyBox's init is the program `busybox` run under the name init
+    job = {100: proc(100, 1, "/bin/busybox", "crond", "-f"), 101: proc(101, 100, "/usr/bin/rsync", "rsync")}
+    as_init = {1: proc(1, 0, "/bin/busybox", "init")}
+    as_shell = {1: proc(1, 0, "/bin/busybox", "sh", "/entrypoint.sh")}
+    # Act
+    managed = tracing.attribute(as_init, {**as_init, **job}, seconds=1.0, home="/h/me", own_pid=999)
+    plain = tracing.attribute(as_shell, {**as_shell, **job}, seconds=1.0, home="/h/me", own_pid=999)
+    # Assert
+    assert [(s.who, s.pid, s.count) for s in managed.spawners] == [("crond -f (a job init starts)", None, 2)]
+    assert [(s.who, s.pid, s.count) for s in plain.spawners] == [("sh entrypoint.sh", 1, 2)]
+
+
+def test_a_program_that_only_calls_itself_a_users_systemd_is_named_like_any_other():
+    # Arrange: the first argument is whatever a process says it is; its program is not
+    base = {1: proc(1, 0, "/usr/lib/systemd/systemd", "/sbin/init"),
+            500: proc(500, 1, "/home/me/bin/poller", "systemd", "--user")}
+    known = {**base, 600: proc(600, 500, "/bin/ps", "ps")}
+    # Act
+    traced = tracing.attribute(base, known, seconds=1.0, home="/h/me", own_pid=999)
+    # Assert
+    assert [(s.who, s.pid, s.count) for s in traced.spawners] == [("systemd --user", 500, 1)]

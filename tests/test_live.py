@@ -109,4 +109,4 @@ def test_a_sample_says_which_system_it_was_taken_on(capsys):
     row = json.loads(capsys.readouterr().out)
     assert code == 0 and row["os"] == procs.OS_NAME and row["processes"] > 0
     assert set(row["memory"]) == {"free_gb", "compressed_gb", "stored_gb", "swap_used_gb", "swap_total_gb", "pressure"}
-    assert row["by_program"]["memory_gb"]
+    assert set(row["by_program"]) == {"cpu_cores", "memory_gb", "written_mb_per_min"}
